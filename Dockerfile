@@ -14,15 +14,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     node.js \
     nano \
+    docker.cli \
  && rm -rf /var/lib/apt/lists/*
+
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-venv
 
 ARG USERNAME=dev
 ARG UID=1000
 ARG GID=1000
 ENV UID=${UID}
 ENV GID=${GID}
-
-
 
 
 RUN \
@@ -50,6 +53,19 @@ RUN \
             fi; \
         fi; \
     fi
+
+  # ========================================
+# Docker client support for running project tests from inside opencode
+# ========================================
+ARG DOCKER_GID=999
+RUN \
+    if [ "${DOCKER_GID}" != "999" ]; then \
+        if ! getent group docker >/dev/null; then \
+            groupadd -g ${DOCKER_GID} docker; \
+        fi && \
+        usermod -aG docker ${USERNAME}; \
+    fi
+
 
 # ========================================
 # Install OpenCode from GitHub releases
