@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     node.js \
     nano \
     docker.cli \
+    ssh \
  && rm -rf /var/lib/apt/lists/*
 
 
