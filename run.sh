@@ -45,13 +45,19 @@ docker build -t opencode-fk \
 echo "→ Starting opencode (same-path mount — inner docker commands now work transparently)"
 echo PROJECT_DIR $PROJECT_DIR
 echo DOCKER_GID $DOCKER_GID
+
+mkdir -p "${HOME}/.local/share/opencode/"
+
 docker run -it --rm \
+    -e DISPLAY=$DISPLAY \
     -v "${PROJECT_DIR}:${PROJECT_DIR}" \
     -v "${PROJECT_DIR}:/workspace" \
     -v "${HOME}/.config/opencode/":/home/dev/.config/opencode/ \
+    -v "${HOME}/.local/share/opencode/":/home/dev/.local/share/opencode/ \
     -v "${HOME}/.ssh/config":/home/dev/.ssh/config \
     -v "${HOME}/.ssh/sockets":/home/dev/.ssh/sockets \
     -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
     -w "${PROJECT_DIR}" \
     --network host \
     --group-add "${DOCKER_GID}" \

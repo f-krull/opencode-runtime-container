@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3-venv
+    python3-venv \
+    xclip\
+    xsel
 
 ARG USERNAME=dev
 ARG UID=1000
@@ -106,5 +108,7 @@ RUN ARCH="${TARGETARCH}" && \
     opencode --version
 
 USER ${USERNAME}
+RUN mkdir -p /home/${USERNAME}/.config/opencode/
+RUN mkdir -p /home/${USERNAME}/.local/share/
 WORKDIR /workspace
 
