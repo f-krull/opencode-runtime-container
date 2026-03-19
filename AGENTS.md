@@ -148,10 +148,21 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 ### Update OpenCode Version
 
-Edit the `OPENCODE_VERSION` argument in Dockerfile:
-```dockerfile
-ARG OPENCODE_VERSION=1.2.3  # or "latest"
+Use the built-in update command:
+```bash
+./opencode.sh update
 ```
+
+This will fetch the latest version from GitHub, rebuild the container, and update the version file (`.opencode-version`).
+
+### Version Checking
+
+On regular runs (`./opencode.sh`), the script:
+- Reads stored version from `.opencode-version`
+- Compares with latest from GitHub
+- If up to date: runs container directly (uses cached image)
+- If update available: shows ASCII banner, waits for keypress, then rebuilds
+- If first run: builds with latest version and creates version file
 
 ### Add New Volume Mounts
 

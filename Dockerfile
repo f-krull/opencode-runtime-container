@@ -96,7 +96,7 @@ RUN ARCH="${TARGETARCH}" && \
     if [ "${OPENCODE_VERSION}" = "latest" ]; then \
       DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-${ARCH}.tar.gz"; \
     else \
-      DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-${ARCH}.tar.gz"; \
+      DOWNLOAD_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ARCH}.tar.gz"; \
     fi && \
     echo "Downloading OpenCode from: ${DOWNLOAD_URL}" && \
     # Download and install
