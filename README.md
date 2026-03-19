@@ -5,11 +5,11 @@ Security-focused Docker container for running [OpenCode](https://github.com/anom
 ## Quick Start
 
 ```bash
-# Build and run OpenCode
-./opencode.sh
+# From your project directory:
+./path/to/opencode.sh
 
 # Update to latest version
-./opencode.sh update
+./path/to/opencode.sh update
 ```
 
 ## Requirements
@@ -22,9 +22,13 @@ Security-focused Docker container for running [OpenCode](https://github.com/anom
 
 On first run, the container builds with the latest OpenCode version. Subsequent runs check for updates - if a new version is available, you'll see a banner and can choose to update or continue with the current version.
 
+## Usage
+
+Run `opencode.sh` from the project directory you want to work on. The current working directory is mounted into the container, allowing OpenCode to access and edit only that project.
+
 ## Mounted Paths
 
-- Project directory (current working directory → `/workspace`)
+- Project directory (current working directory, mounted at same path)
 - `~/.config/opencode/` - OpenCode settings and API key
 - `~/.ssh/config` and `~/.ssh/sockets` - SSH access (OpenCode can SSH without password or key through existing connections shared via ControlPath)
 - `/var/run/docker.sock` - Docker daemon (for running tests)

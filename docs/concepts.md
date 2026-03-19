@@ -21,7 +21,7 @@ The project accomplishes three primary goals:
 The core security concept is **explicit allowlisting** of filesystem access:
 
 - Only explicitly mounted paths are accessible to OpenCode inside the container
-- Project directory mounted at `/workspace` - this is what OpenCode "sees"
+- Project directory mounted at the same path - this is what OpenCode "sees"
 - Host's entire filesystem is NOT accessible (unlike a typical installation)
 - Container runs as non-root user (`dev`) with configurable UID/GID matching the host user
 
@@ -30,8 +30,8 @@ The core security concept is **explicit allowlisting** of filesystem access:
 ```
 Host Machine                     Container
 ┌─────────────────┐            ┌─────────────────┐
-│  Project Code   │◄──mount───►│  /workspace     │
-│  (selected dirs)│            │  (OpenCode sees)│
+│  Project Code   │◄──mount───►│  Project Dir    │
+│  (current dir)  │            │  (same path)    │
 ├─────────────────┤            ├─────────────────┤
 │  Docker Daemon  │◄──socket─►│  docker client  │
 │                 │   mount    │  (run tests)    │
@@ -52,7 +52,7 @@ Host Machine                     Container
 The container receives explicit mounts only:
 
 ```bash
--v "${PROJECT_DIR}:/workspace"           # Current project
+-v "${PROJECT_DIR}:${PROJECT_DIR}"       # Current project (same path)
 -v "${HOME}/.config/opencode/":...       # OpenCode settings
 -v "${HOME}/.ssh/config":...             # SSH config
 -v "${HOME}/.ssh/sockets":...            # SSH agent sockets

@@ -25,16 +25,18 @@ docker build -t opencode-fk -f Dockerfile .
 
 ### Run the Container
 
+Run from your project directory:
+
 ```bash
 # Using the run script (recommended)
-./opencode.sh
+./path/to/opencode.sh
 
 # Or directly with docker
 docker run -it --rm \
-    -v "${PWD}:/workspace" \
+    -v "${PWD}:${PWD}" \
     -v "${HOME}/.config/opencode/":/home/dev/.config/opencode/ \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -w /workspace \
+    -w "${PWD}" \
     --network host \
     opencode-fk
 ```
@@ -43,8 +45,8 @@ docker run -it --rm \
 
 ```bash
 docker run --rm -it \
-    -v "$(pwd)":/workspace \
-    -w /workspace \
+    -v "$(pwd):$(pwd)" \
+    -w "$(pwd)" \
     opencode-fk <command>
 ```
 
@@ -53,8 +55,8 @@ docker run --rm -it \
 ```
 Host Machine                    Container
 ┌─────────────────┐            ┌─────────────────┐
-│  Project Code   │◄──mount───►│  /workspace     │
-│  (selected dirs)│            │  (OpenCode sees)│
+│  Project Code   │◄──mount───►│  Project Dir    │
+│  (current dir)  │            │  (same path)    │
 ├─────────────────┤            ├─────────────────┤
 │  Docker Daemon  │◄──socket─►│  docker client  │
 │                 │   mount    │  (run tests)    │
@@ -64,7 +66,7 @@ Host Machine                    Container
 ### Security Model
 
 Only explicitly mounted directories are accessible to OpenCode. Key mounts in opencode.sh:
-- Project directory (read-write for editing)
+- Project directory (current working directory, mounted at same path)
 - `~/.config/opencode/` (OpenCode settings)
 - `~/.ssh/config` and sockets (SSH access)
 - `/var/run/docker.sock` (Docker-in-Docker for dependency execution)
@@ -150,14 +152,14 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 Use the built-in update command:
 ```bash
-./opencode.sh update
+./path/to/opencode.sh update
 ```
 
 This will fetch the latest version from GitHub, rebuild the container, and update the version file (`.opencode-version`).
 
 ### Version Checking
 
-On regular runs (`./opencode.sh`), the script:
+On regular runs (from project directory), the script:
 - Reads stored version from `.opencode-version`
 - Compares with latest from GitHub
 - If up to date: runs container directly (uses cached image)
