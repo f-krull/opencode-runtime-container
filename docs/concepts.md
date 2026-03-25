@@ -67,13 +67,14 @@ First Run:
   → No version file → fetch latest from GitHub → build → save version
 
 Regular Run:
-  → Read stored version → compare with GitHub
-  → If same: run container (uses cached image)
-  → If different: show banner → wait for key → rebuild
+  → Read stored version → run container (uses cached image)
+  → No automatic update checks
 
 Update Command:
   → Fetch latest → rebuild → update version file
 ```
+
+The version file is stored in the same directory as `opencode.sh`, not in the project directory.
 
 ---
 

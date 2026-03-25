@@ -20,7 +20,7 @@ Security-focused Docker container for running [OpenCode](https://github.com/anom
 
 ## First Run
 
-On first run, the container builds with the latest OpenCode version. Subsequent runs check for updates - if a new version is available, you'll see a banner and can choose to update or continue with the current version.
+On first run, the container builds with the latest OpenCode version. The version is stored in `.opencode-version` next to `opencode.sh`. Subsequent runs use the stored version (no automatic update checks). Run `./path/to/opencode.sh update` to update to the latest version.
 
 ## Usage
 

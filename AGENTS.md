@@ -157,14 +157,17 @@ Use the built-in update command:
 
 This will fetch the latest version from GitHub, rebuild the container, and update the version file (`.opencode-version`).
 
+### Version File Location
+
+The version file (`.opencode-version`) is stored in the same directory as `opencode.sh`, not in the project directory. This allows using different OpenCode versions for different projects by placing `opencode.sh` in each project.
+
 ### Version Checking
 
-On regular runs (from project directory), the script:
-- Reads stored version from `.opencode-version`
-- Compares with latest from GitHub
-- If up to date: runs container directly (uses cached image)
-- If update available: shows ASCII banner, waits for keypress, then rebuilds
-- If first run: builds with latest version and creates version file
+On regular runs, the script:
+- Reads stored version from `.opencode-version` (next to opencode.sh)
+- Runs container with stored version (uses cached image)
+- No automatic update checks
+- Run `./path/to/opencode.sh update` to check for and apply updates
 
 ### Add New Volume Mounts
 

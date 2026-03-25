@@ -5,7 +5,7 @@ SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 DOCKER_GID=$(getent group docker | cut -d: -f3 || echo 999)
 
 PROJECT_DIR="$(realpath "$(pwd)")"
-VERSION_FILE="${PROJECT_DIR}/.opencode-version"
+VERSION_FILE="${SCRIPT_DIR}/.opencode-version"
 
 OPENCODE_VERSION="${OPENCODE_VERSION:-latest}"
 
@@ -23,58 +23,6 @@ get_latest_version() {
 update_version_file() {
     local version="$1"
     echo "${version}" > "${VERSION_FILE}"
-}
-
-print_update_banner() {
-    local current="$1"
-    local latest="$2"
-    local banner
-    banner=$(cat <<'EOF'
-
-╔═══════════════════════════════════════════════════════════╗
-║                                                           ║
-║      🎉  New OpenCode Version Available!  🎉             ║
-║                                                           ║
-║         Current: CURRENT_VERSION                          ║
-║         Latest:  LATEST_VERSION                           ║
-║                                                           ║
-║              Press any key to continue...                 ║
-║                                                           ║
-╚═══════════════════════════════════════════════════════════╝
-
-EOF
-)
-    banner="${banner//CURRENT_VERSION/$current}"
-    banner="${banner//LATEST_VERSION/$latest}"
-    echo "${banner}"
-}
-
-check_for_updates() {
-    local stored
-    stored=$(get_stored_version)
-
-    if [[ -z "${stored}" ]]; then
-        echo "→ First run: no stored version found, fetching latest..."
-        return 1
-    fi
-
-    local latest
-    latest=$(get_latest_version)
-
-    if [[ -z "${latest}" ]]; then
-        echo "→ Could not fetch latest version from GitHub, continuing..."
-        return 0
-    fi
-
-    if [[ "${stored}" != "${latest}" ]]; then
-        print_update_banner "${stored}" "${latest}"
-        read -n 1 -s -r
-        echo ""
-        return 1
-    else
-        echo "→ OpenCode is up to date (${stored})"
-        return 0
-    fi
 }
 
 update_opencode() {
@@ -134,21 +82,15 @@ main() {
         "")
             local stored
             stored=$(get_stored_version)
-            local needs_build=true
 
-            if [[ -n "${stored}" ]] && check_for_updates; then
+            if [[ -n "${stored}" ]]; then
                 OPENCODE_VERSION="${stored}"
-                needs_build=false
-            fi
-
-            if [[ "${needs_build}" == "true" ]]; then
-                if [[ -z "${stored}" ]]; then
-                    OPENCODE_VERSION=$(get_latest_version)
-                fi
+                run_container
+            else
+                echo "→ First run: no stored version found, fetching latest..."
+                OPENCODE_VERSION=$(get_latest_version)
                 build_and_run
                 update_version_file "${OPENCODE_VERSION}"
-            else
-                run_container
             fi
             ;;
         *)
