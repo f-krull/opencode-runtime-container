@@ -20,6 +20,30 @@ get_latest_version() {
         grep -m1 '"tag_name"' | sed 's/.*"tag_name": *"v\?\([^"]*\)".*/\1/'
 }
 
+check_for_updates() {
+    local timeout="${1:-5}"
+    local result
+    result=$(curl -fsSL --max-time "${timeout}" https://api.github.com/repos/anomalyco/opencode/releases/latest 2>/dev/null | \
+        grep -m1 '"tag_name"' | sed 's/.*"tag_name": *"v\?\([^"]*\)".*/\1/' || true)
+    echo "${result}"
+}
+
+show_update_banner() {
+    local new_version="$1"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║           New OpenCode version available!                ║"
+    echo "║                     ${new_version}                           ║"
+    echo "║              Press any key to continue...                ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    if [[ -t 0 ]]; then
+        read -n 1 -s
+    else
+        sleep 1
+    fi
+}
+
 update_version_file() {
     local version="$1"
     echo "${version}" > "${VERSION_FILE}"
@@ -27,19 +51,26 @@ update_version_file() {
 
 update_opencode() {
     local latest
-    latest=$(get_latest_version)
+    latest=$(check_for_updates)
 
     if [[ -z "${latest}" ]]; then
         echo "✗ Could not fetch latest version from GitHub" >&2
         exit 1
     fi
 
+    show_update_banner "${latest}"
+
     OPENCODE_VERSION="${latest}"
     echo "→ Updating OpenCode to version ${latest}..."
 
-    build_and_run
+    echo "→ Building opencode container with Docker client support (GID=${DOCKER_GID})"
+    docker build -t opencode-fk \
+        --build-arg OPENCODE_VERSION="${OPENCODE_VERSION}" \
+        --build-arg DOCKER_GID="${DOCKER_GID}" \
+        -f - "${SCRIPT_DIR}" < "${SCRIPT_DIR}/Dockerfile"
+
     update_version_file "${latest}"
-    echo "→ Updated to version ${latest}"
+    echo "✓ Updated to version ${latest}"
 }
 
 build_and_run() {
@@ -53,7 +84,7 @@ build_and_run() {
 }
 
 run_container() {
-    echo "→ Starting opencode (same-path mount — inner docker commands now work transparently)"
+    echo "→ Starting opencode v${OPENCODE_VERSION} (same-path mount — inner docker commands now work transparently)"
 
     mkdir -p "${HOME}/.local/share/opencode/"
 
@@ -80,17 +111,25 @@ main() {
             update_opencode
             ;;
         "")
-            local stored
+            local stored latest
             stored=$(get_stored_version)
+            latest=$(check_for_updates 1)
+
+            if [[ -n "${latest}" && "${latest}" != "${stored}" ]]; then
+                show_update_banner "${latest}"
+            fi
 
             if [[ -n "${stored}" ]]; then
                 OPENCODE_VERSION="${stored}"
                 run_container
             else
-                echo "→ First run: no stored version found, fetching latest..."
-                OPENCODE_VERSION=$(get_latest_version)
+                if [[ -z "${latest}" ]]; then
+                    echo "→ First run: no stored version found, fetching latest..."
+                    latest=$(get_latest_version)
+                fi
+                OPENCODE_VERSION="${latest}"
                 build_and_run
-                update_version_file "${OPENCODE_VERSION}"
+                update_version_file "${latest}"
             fi
             ;;
         *)

@@ -76,6 +76,7 @@ RUN \
 # ========================================
 ARG TARGETARCH
 ARG OPENCODE_VERSION=latest
+ENV OPENCODE_VERSION=${OPENCODE_VERSION}
 RUN ARCH="${TARGETARCH}" && \
     if [ -z "${ARCH}" ]; then \
       if command -v dpkg >/dev/null 2>&1; then \

@@ -63,6 +63,12 @@ Host Machine                    Container
 └─────────────────┘            └─────────────────┘
 ```
 
+### Environment Variables
+
+The container includes the following environment variables:
+- `OPENCODE_VERSION` - The OpenCode version baked into the container image
+- `UID` / `GID` - User/group IDs for the dev user
+
 ### Security Model
 
 Only explicitly mounted directories are accessible to OpenCode. Key mounts in opencode.sh:
@@ -155,7 +161,16 @@ Use the built-in update command:
 ./path/to/opencode.sh update
 ```
 
-This will fetch the latest version from GitHub, rebuild the container, and update the version file (`.opencode-version`).
+This will:
+1. Check GitHub for the latest version
+2. Show a banner with the new version number
+3. Wait for keypress to continue
+4. Build a new container with the latest version
+5. Update the version file (`.opencode-version`)
+
+The `update` command does not start the container—it only updates the Docker image.
+
+The current version is displayed on startup and is also available inside the container as the `OPENCODE_VERSION` environment variable.
 
 ### Version File Location
 
@@ -165,9 +180,12 @@ The version file (`.opencode-version`) is stored in the same directory as `openc
 
 On regular runs, the script:
 - Reads stored version from `.opencode-version` (next to opencode.sh)
+- Checks GitHub for newer version (1 second timeout, non-blocking)
+- If newer version available, shows banner and waits for keypress before continuing
 - Runs container with stored version (uses cached image)
-- No automatic update checks
-- Run `./path/to/opencode.sh update` to check for and apply updates
+- Displays current version on startup
+
+The version is persisted in `.opencode-version` and also baked into the container as `OPENCODE_VERSION` environment variable.
 
 ### Add New Volume Mounts
 
