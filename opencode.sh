@@ -83,21 +83,53 @@ build_and_run() {
     run_container
 }
 
+validate_paths() {
+    local -a paths=("$@")
+    local path resolved
+
+    for path in "${paths[@]}"; do
+        resolved="$(realpath "${path}")"
+        if [[ ! -e "${resolved}" ]]; then
+            echo "✗ Path does not exist: ${path}" >&2
+            return 1
+        fi
+    done
+
+    local -a sorted
+    mapfile -t sorted < <(printf "%s\n" "${paths[@]}" | sort)
+    for (( i=1; i<${#sorted[@]}; i++ )); do
+        if [[ "${sorted[$i]}" == "${sorted[$((i-1))]}" ]]; then
+            echo "✗ Duplicate path specified: ${sorted[$i]}" >&2
+            return 1
+        fi
+    done
+}
+
 run_container() {
-    echo "→ Starting opencode v${OPENCODE_VERSION} (same-path mount — inner docker commands now work transparently)"
+    echo "→ Starting opencode v${OPENCODE_VERSION}"
 
     mkdir -p "${HOME}/.local/share/opencode/"
 
+    local -a volume_args=(
+        -v "${PROJECT_DIR}:${PROJECT_DIR}"
+    )
+
+    for path in "${EXTRA_MOUNTS[@]}"; do
+        volume_args+=(-v "${path}:${path}")
+    done
+
+    volume_args+=(
+        -v "${HOME}/.config/opencode/":/home/dev/.config/opencode/
+        -v "${HOME}/.local/share/opencode/":/home/dev/.local/share/opencode/
+        -v "${HOME}/.ssh/config":/home/dev/.ssh/config
+        -v "${HOME}/.ssh/sockets":/home/dev/.ssh/sockets
+        -v /var/run/docker.sock:/var/run/docker.sock
+        -v /tmp/.X11-unix:/tmp/.X11-unix
+    )
+
     docker run -it --rm \
         -e DISPLAY=$DISPLAY \
-        -v "${PROJECT_DIR}:${PROJECT_DIR}" \
-        -v "${PROJECT_DIR}:/workspace" \
-        -v "${HOME}/.config/opencode/":/home/dev/.config/opencode/ \
-        -v "${HOME}/.local/share/opencode/":/home/dev/.local/share/opencode/ \
-        -v "${HOME}/.ssh/config":/home/dev/.ssh/config \
-        -v "${HOME}/.ssh/sockets":/home/dev/.ssh/sockets \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -v /tmp/.X11-unix:/tmp/.X11-unix \
+        "${volume_args[@]}" \
         -w "${PROJECT_DIR}" \
         --network host \
         --group-add "${DOCKER_GID}" \
@@ -111,32 +143,52 @@ main() {
             update_opencode
             ;;
         "")
-            local stored latest
-            stored=$(get_stored_version)
-            latest=$(check_for_updates 1)
-
-            if [[ -n "${latest}" && "${latest}" != "${stored}" ]]; then
-                show_update_banner "${latest}"
-            fi
-
-            if [[ -n "${stored}" ]]; then
-                OPENCODE_VERSION="${stored}"
-                run_container
-            else
-                if [[ -z "${latest}" ]]; then
-                    echo "→ First run: no stored version found, fetching latest..."
-                    latest=$(get_latest_version)
-                fi
-                OPENCODE_VERSION="${latest}"
-                build_and_run
-                update_version_file "${latest}"
-            fi
+            PROJECT_DIR="$(realpath "$(pwd)")"
+            EXTRA_MOUNTS=()
+            check_and_run
             ;;
         *)
-            echo "Usage: $0 [update]" >&2
-            exit 1
+            PROJECT_DIR="$(realpath "${1}")"
+            mapfile -t EXTRA_MOUNTS < <(resolve_extra_mounts "${@:2}")
+
+            if ! validate_paths "${PROJECT_DIR}" "${EXTRA_MOUNTS[@]}"; then
+                exit 1
+            fi
+
+            check_and_run
             ;;
     esac
+}
+
+check_and_run() {
+    local stored latest
+    stored=$(get_stored_version)
+    latest=$(check_for_updates 1)
+
+    if [[ -n "${latest}" && "${latest}" != "${stored}" ]]; then
+        show_update_banner "${latest}"
+    fi
+
+    if [[ -n "${stored}" ]]; then
+        OPENCODE_VERSION="${stored}"
+        run_container
+    else
+        if [[ -z "${latest}" ]]; then
+            echo "→ First run: no stored version found, fetching latest..."
+            latest=$(get_latest_version)
+        fi
+        OPENCODE_VERSION="${latest}"
+        build_and_run
+        update_version_file "${latest}"
+    fi
+}
+
+resolve_extra_mounts() {
+    local path resolved
+    for path in "$@"; do
+        resolved="$(realpath "${path}")"
+        echo "${resolved}"
+    done
 }
 
 main "$@"
