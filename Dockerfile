@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nano \
     docker.cli \
     ssh \
+    xxd \
+    file \
  && rm -rf /var/lib/apt/lists/*
 
 
