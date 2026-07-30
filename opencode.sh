@@ -6,6 +6,9 @@ DOCKER_GID=$(getent group docker | cut -d: -f3 || echo 999)
 
 PROJECT_DIR="$(realpath "$(pwd)")"
 VERSION_FILE="${SCRIPT_DIR}/.opencode-version"
+OPENCODE_DIR="${SCRIPT_DIR}/.opencode"
+OPENCODE_BASHRC="${OPENCODE_DIR}/.bashrc"
+OPENCODE_HISTORY="${OPENCODE_DIR}/.bash_history"
 
 OPENCODE_VERSION="${OPENCODE_VERSION:-latest}"
 
@@ -109,6 +112,9 @@ run_container() {
     echo "→ Starting opencode v${OPENCODE_VERSION}"
 
     mkdir -p "${HOME}/.local/share/opencode/"
+    mkdir -p "${OPENCODE_DIR}"
+    touch "${OPENCODE_BASHRC}"
+    touch "${OPENCODE_HISTORY}"
 
     local -a volume_args=(
         -v "${PROJECT_DIR}:${PROJECT_DIR}"
@@ -125,6 +131,9 @@ run_container() {
         -v "${HOME}/.ssh/sockets":/home/dev/.ssh/sockets
         -v /var/run/docker.sock:/var/run/docker.sock
         -v /tmp/.X11-unix:/tmp/.X11-unix
+        -v "${HOME}/.grok/":/home/dev/.grok/
+        -v "${OPENCODE_BASHRC}":/home/dev/.bashrc
+        -v "${OPENCODE_HISTORY}":/home/dev/.bash_history
     )
 
     docker run -it --rm \

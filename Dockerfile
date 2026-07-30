@@ -113,5 +113,7 @@ RUN ARCH="${TARGETARCH}" && \
 USER ${USERNAME}
 RUN mkdir -p /home/${USERNAME}/.config/opencode/
 RUN mkdir -p /home/${USERNAME}/.local/share/
+# Create default .bashrc so bash login shells work with the mounted bashrc
+RUN echo "# dev shell" > /home/${USERNAME}/.bashrc
 WORKDIR /workspace
 
