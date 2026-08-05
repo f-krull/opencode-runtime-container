@@ -6,8 +6,18 @@ DOCKER_GID=$(getent group docker | cut -d: -f3 || echo 999)
 
 PROJECT_DIR="$(realpath "$(pwd)")"
 VERSION_FILE="${SCRIPT_DIR}/.opencode-version"
+OPENCODE_DIR="${SCRIPT_DIR}/.opencode"
+OPENCODE_BASHRC="${OPENCODE_DIR}/.bashrc"
 
 OPENCODE_VERSION="${OPENCODE_VERSION:-latest}"
+
+# One history file per absolute project path (shared history would leak A↔B).
+history_file_for_project() {
+    local project_dir="$1"
+    local hist_key
+    hist_key="$(printf '%s' "${project_dir}" | sha256sum | awk '{print $1}')"
+    printf '%s\n' "${OPENCODE_DIR}/history/${hist_key}"
+}
 
 get_stored_version() {
     if [[ -f "${VERSION_FILE}" ]]; then
@@ -108,7 +118,13 @@ validate_paths() {
 run_container() {
     echo "→ Starting opencode v${OPENCODE_VERSION}"
 
+    local OPENCODE_HISTORY
+    OPENCODE_HISTORY="$(history_file_for_project "${PROJECT_DIR}")"
+
     mkdir -p "${HOME}/.local/share/opencode/"
+    mkdir -p "${OPENCODE_DIR}/history"
+    touch "${OPENCODE_BASHRC}"
+    touch "${OPENCODE_HISTORY}"
 
     local -a volume_args=(
         -v "${PROJECT_DIR}:${PROJECT_DIR}"
@@ -125,6 +141,9 @@ run_container() {
         -v "${HOME}/.ssh/sockets":/home/dev/.ssh/sockets
         -v /var/run/docker.sock:/var/run/docker.sock
         -v /tmp/.X11-unix:/tmp/.X11-unix
+        -v "${HOME}/.grok/":/home/dev/.grok/
+        -v "${OPENCODE_BASHRC}":/home/dev/.bashrc
+        -v "${OPENCODE_HISTORY}":/home/dev/.bash_history
     )
 
     docker run -it --rm \
@@ -191,4 +210,6 @@ resolve_extra_mounts() {
     done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
