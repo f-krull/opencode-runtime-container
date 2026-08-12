@@ -142,6 +142,7 @@ run_container() {
         -v /var/run/docker.sock:/var/run/docker.sock
         -v /tmp/.X11-unix:/tmp/.X11-unix
         -v "${HOME}/.grok/":/home/dev/.grok/
+        -v "${HOME}/.config/opencode/skills":/home/dev/.grok/skills
         -v "${OPENCODE_BASHRC}":/home/dev/.bashrc
         -v "${OPENCODE_HISTORY}":/home/dev/.bash_history
     )
