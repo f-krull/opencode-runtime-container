@@ -20,6 +20,20 @@ history_file_for_project() {
     printf '%s\n' "${OPENCODE_DIR}/history/${hist_key}"
 }
 
+# Record a project path so previous projects can be listed later (mounts and
+# history files are keyed by one-way hash, so the real path must be stored).
+# Maintains newest-first order with no duplicates.
+register_project() {
+    local project="$1" file tmp
+    file="${OPENCODE_DIR}/projects"
+    mkdir -p "${OPENCODE_DIR}"
+    touch "${file}"
+    tmp="$(mktemp)"
+    printf '%s\n' "${project}" > "${tmp}"
+    grep -vxF "${project}" "${file}" >> "${tmp}" || true
+    mv "${tmp}" "${file}"
+}
+
 get_stored_version() {
     if [[ -f "${VERSION_FILE}" ]]; then
         cat "${VERSION_FILE}"
@@ -234,19 +248,20 @@ main() {
         0)
             PROJECT_DIR="$(realpath "$(pwd)")"
             EXTRA_MOUNTS=()
-            check_and_run
             ;;
         *)
             PROJECT_DIR="$(realpath "${POSITIONAL[0]}")"
             mapfile -t EXTRA_MOUNTS < <(resolve_extra_mounts "${POSITIONAL[@]:1}")
-
-            if ! validate_paths "${PROJECT_DIR}" "${EXTRA_MOUNTS[@]}"; then
-                exit 1
-            fi
-
-            check_and_run
             ;;
     esac
+
+    apply_mount_memory
+
+    if ! validate_paths "${PROJECT_DIR}" "${EXTRA_MOUNTS[@]}"; then
+        exit 1
+    fi
+
+    check_and_run
 }
 
 check_and_run() {
@@ -278,6 +293,158 @@ resolve_extra_mounts() {
         resolved="$(realpath "${path}")"
         echo "${resolved}"
     done
+}
+
+# One memory file per absolute project path (mirrors history_file_for_project).
+mounts_file_for_project() {
+    local project_dir="$1"
+    local key
+    key="$(printf '%s' "${project_dir}" | sha256sum | awk '{print $1}')"
+    printf '%s\n' "${OPENCODE_DIR}/mounts/${key}"
+}
+
+# Load extra mounts for a project into the global MEM_MOUNTS array.
+# Returns 0 if a memory file for the project exists, 1 otherwise.
+get_mem_mounts() {
+    local project="$1" file
+    MEM_MOUNTS=()
+    file="$(mounts_file_for_project "${project}")"
+    [[ -f "${file}" ]] || return 1
+    mapfile -t MEM_MOUNTS < "${file}"
+}
+
+# Save extra mounts for a project (one per line). Removes the file if empty.
+save_mem_mounts() {
+    local project="$1" file tmp
+    shift
+    file="$(mounts_file_for_project "${project}")"
+    mkdir -p "$(dirname "${file}")"
+
+    if (( $# > 0 )); then
+        tmp="$(mktemp)"
+        printf '%s\n' "$@" > "${tmp}"
+        mv "${tmp}" "${file}"
+    else
+        rm -f "${file}"
+    fi
+}
+
+# Remove the memory file for a project.
+clear_mem_mounts() {
+    local project="$1" file
+    file="$(mounts_file_for_project "${project}")"
+    rm -f "${file}"
+}
+
+# True if the two referenced arrays contain the same members regardless of order.
+sets_equal() {
+    local -n _a="$1" _b="$2"
+    local -a sa=() sb=()
+    if (( ${#_a[@]} > 0 )); then
+        mapfile -t sa < <(printf '%s\n' "${_a[@]}" | sort -u)
+    fi
+    if (( ${#_b[@]} > 0 )); then
+        mapfile -t sb < <(printf '%s\n' "${_b[@]}" | sort -u)
+    fi
+    [[ "${sa[*]}" == "${sb[*]}" ]]
+}
+
+# Prompt for Y/n. Defaults to ${2:-y}; non-interactive input takes the default.
+prompt_yn() {
+    local prompt="$1" default="${2:-y}" answer
+    while true; do
+        if ! [[ -t 0 ]]; then
+            [[ "${default}" =~ ^[yY]$ ]] && return 0 || return 1
+        fi
+        printf '%s ' "${prompt}"
+        IFS= read -r answer
+        case "${answer}" in
+            '' )
+                [[ "${default}" =~ ^[yY]$ ]] && return 0 || return 1
+                ;;
+            y|Y) return 0 ;;
+            n|N) return 1 ;;
+            *) echo "Please answer y or n." >&2 ;;
+        esac
+    done
+}
+
+# Print an array, one item per line.
+show_mount_list() {
+    local -n _list="$1"
+    local item
+    for item in "${_list[@]}"; do
+        printf '  %s\n' "${item}"
+    done
+}
+
+# Print only the genuine additions/removals between the newly-passed and
+# memorized extra mounts (items present in both sets are unchanged, not listed).
+show_mount_diff() {
+    local -n _new="$1" _old="$2"
+    local item other found
+    local -a added=() removed=()
+
+    for item in "${_new[@]}"; do
+        found=0
+        for other in "${_old[@]}"; do
+            [[ "${item}" == "${other}" ]] && { found=1; break; }
+        done
+        (( found )) || added+=("${item}")
+    done
+    for item in "${_old[@]}"; do
+        found=0
+        for other in "${_new[@]}"; do
+            [[ "${item}" == "${other}" ]] && { found=1; break; }
+        done
+        (( found )) || removed+=("${item}")
+    done
+
+    if (( ${#added[@]} > 0 )); then
+        echo "  added:"
+        for item in "${added[@]}"; do
+            printf '    + %s\n' "${item}"
+        done
+    fi
+    if (( ${#removed[@]} > 0 )); then
+        echo "  removed:"
+        for item in "${removed[@]}"; do
+            printf '    - %s\n' "${item}"
+        done
+    fi
+}
+
+# Resolve mount memory: reuse, save, prompt, or clear based on the current invocation.
+apply_mount_memory() {
+    local -a reuse=()
+
+    if get_mem_mounts "${PROJECT_DIR}"; then
+        # Memory exists for this project.
+        if (( ${#EXTRA_MOUNTS[@]} > 0 )); then
+            # 2+ dirs passed.
+            if sets_equal EXTRA_MOUNTS MEM_MOUNTS; then
+                return 0
+            fi
+            show_mount_diff EXTRA_MOUNTS MEM_MOUNTS
+            if prompt_yn "use new mounts [Y/n]" y; then
+                save_mem_mounts "${PROJECT_DIR}" "${EXTRA_MOUNTS[@]}"
+            else
+                EXTRA_MOUNTS=( "${MEM_MOUNTS[@]}" )
+            fi
+        else
+            # 0 or 1 dir passed: offer to reuse the memorized mounts.
+            reuse=( "${PROJECT_DIR}" "${MEM_MOUNTS[@]}" )
+            show_mount_list reuse
+            if prompt_yn "reuse mounts [Y/n]" y; then
+                EXTRA_MOUNTS=( "${MEM_MOUNTS[@]}" )
+            else
+                clear_mem_mounts "${PROJECT_DIR}"
+            fi
+        fi
+    elif (( ${#EXTRA_MOUNTS[@]} > 0 )); then
+        # No memory yet for this project: silently save when 2+ dirs are passed.
+        save_mem_mounts "${PROJECT_DIR}" "${EXTRA_MOUNTS[@]}"
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
