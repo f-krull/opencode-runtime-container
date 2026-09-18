@@ -50,6 +50,20 @@ docker run --rm -it \
     opencode-fk <command>
 ```
 
+### Pick a Previous Project (vcopen.sh)
+
+`vcopen.sh` shows an arrow-key menu of previously opened projects (newest first)
+and launches `opencode.sh` on the selection, auto-restoring that project's
+memorized mounts.
+
+```bash
+./vcopen.sh
+```
+
+Each run of `opencode.sh` records the project path in `.opencode/projects`
+(newest-first, no duplicates) so projects can be listed later — mounts and
+history files are keyed by one-way hash, so the real path must be stored.
+
 ### Architecture
 
 ```

@@ -140,6 +140,7 @@ run_container() {
     mkdir -p "${OPENCODE_DIR}/history"
     touch "${OPENCODE_BASHRC}"
     touch "${OPENCODE_HISTORY}"
+    register_project "${PROJECT_DIR}"
 
     local -a volume_args=(
         -v "${PROJECT_DIR}:${PROJECT_DIR}"
