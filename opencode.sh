@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 DOCKER_GID=$(getent group docker | cut -d: -f3 || echo 999)
+KVM_GID=$(getent group kvm | cut -d: -f3 || true)
 
 PROJECT_DIR="$(realpath "$(pwd)")"
 VERSION_FILE="${SCRIPT_DIR}/.opencode-version"
@@ -139,7 +140,6 @@ run_container() {
         -v "${HOME}/.local/share/opencode/":/home/dev/.local/share/opencode/
         -v "${HOME}/.ssh/config":/home/dev/.ssh/config
         -v "${HOME}/.ssh/sockets":/home/dev/.ssh/sockets
-        -v /var/run/docker.sock:/var/run/docker.sock
         -v /tmp/.X11-unix:/tmp/.X11-unix
         -v "${HOME}/.grok/":/home/dev/.grok/
         -v "${HOME}/.config/opencode/skills":/home/dev/.grok/skills
@@ -147,29 +147,98 @@ run_container() {
         -v "${OPENCODE_HISTORY}":/home/dev/.bash_history
     )
 
+    if [[ "${MOUNT_DOCKER}" == true ]]; then
+        volume_args+=(-v /var/run/docker.sock:/var/run/docker.sock)
+    fi
+
+    local -a extra_args=()
+    if [[ "${MOUNT_DOCKER}" == true ]]; then
+        extra_args+=(--group-add "${DOCKER_GID}")
+    fi
+
+    if [[ "${MOUNT_KVM}" == true ]]; then
+        extra_args+=(--device /dev/kvm)
+        if [[ -n "${KVM_GID}" ]]; then
+            extra_args+=(--group-add "${KVM_GID}")
+        fi
+    fi
+
     docker run -it --rm \
         -e DISPLAY=$DISPLAY \
         "${volume_args[@]}" \
         -w "${PROJECT_DIR}" \
         --network host \
-        --group-add "${DOCKER_GID}" \
+        "${extra_args[@]}" \
         opencode-fk \
         bash -c "exec bash"
 }
 
+MOUNT_DOCKER=true
+MOUNT_KVM=false
+
+show_help() {
+    cat <<'EOF'
+Usage: opencode.sh [options] [project-dir] [extra-mounts...]
+
+Run OpenCode inside a Docker container.
+
+Options:
+  --no-docker    Do not mount the Docker socket (default: mounted)
+  --kvm          Mount /dev/kvm for hardware-accelerated virtualization
+                 (default: not mounted)
+  -h, --help     Show this help message and exit
+  update         Build/update the container image to the latest version
+
+Commands:
+  project-dir            Path to the project to open (default: current dir)
+  extra-mounts...        Additional paths to mount into the container
+EOF
+}
+
+parse_flags() {
+    local args=()
+    for arg in "$@"; do
+        case "${arg}" in
+            --no-docker)
+                MOUNT_DOCKER=false
+                ;;
+            --kvm)
+                MOUNT_KVM=true
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -*)
+                echo "✗ Unknown option: ${arg}" >&2
+                show_help >&2
+                exit 1
+                ;;
+            *)
+                args+=("${arg}")
+                ;;
+        esac
+    done
+    POSITIONAL=("${args[@]}")
+}
+
 main() {
-    case "${1:-}" in
-        update)
-            update_opencode
-            ;;
-        "")
+    parse_flags "$@"
+
+    if [[ "${POSITIONAL[0]:-}" == "update" ]]; then
+        update_opencode
+        return
+    fi
+
+    case "${#POSITIONAL[@]}" in
+        0)
             PROJECT_DIR="$(realpath "$(pwd)")"
             EXTRA_MOUNTS=()
             check_and_run
             ;;
         *)
-            PROJECT_DIR="$(realpath "${1}")"
-            mapfile -t EXTRA_MOUNTS < <(resolve_extra_mounts "${@:2}")
+            PROJECT_DIR="$(realpath "${POSITIONAL[0]}")"
+            mapfile -t EXTRA_MOUNTS < <(resolve_extra_mounts "${POSITIONAL[@]:1}")
 
             if ! validate_paths "${PROJECT_DIR}" "${EXTRA_MOUNTS[@]}"; then
                 exit 1
