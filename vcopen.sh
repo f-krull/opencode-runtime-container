@@ -20,7 +20,8 @@ list_projects() {
         [[ -f "$(mounts_file_for_project "${path}")" ]] && m=1
         [[ -f "$(history_file_for_project "${path}")" ]] && h=1
         (( m || h )) || continue
-        PROJECTS+=("${path}:${m}${h}")
+        # Use a unit separator as delimiter (safe for paths containing ':').
+        PROJECTS+=("${path}"$'\x1f'"${m}${h}")
     done < "${registry}"
     (( ${#PROJECTS[@]} > 0 ))
 }
@@ -31,50 +32,96 @@ list_projects() {
 pick_project() {
     local -a entries=("$@")
     local n="${#entries[@]}"
-    local i=0 idx entry marker key rest
-    local -a path=()
+    local i=0 idx entry marker path label rest key
+    local orig
+    local interrupted=0
+    local first=1
+    PICK_RESULT=""
 
-    # Enter raw mode: disable echo, enable reading arrow-key escapes.
-    stty -echo
-    trap 'stty echo; echo' EXIT INT TERM
+    # Save original terminal settings so they can be restored exactly.
+    orig="$(stty -g 2>/dev/null)" || orig=""
 
-    while true; do
-        # Move cursor to top and redraw the list.
-        printf '\r\033[J' >&2
+    # Canonical off + no echo so each key returns immediately. ISIG is left ON
+    # so Ctrl-C generates a normal SIGINT, which we trap into `interrupted` and
+    # notice via the timed read (a trapped SIGINT makes read re-block, not
+    # return, so we poll). This works regardless of the terminal's ISIG setup.
+    stty -echo -icanon min 1 time 0 2>/dev/null || stty -echo
+
+    restore_tty() {
+        if (( !first )); then
+            printf '\033[%dA\033[J' "${n}" >&2
+        fi
+        if [[ -n "${orig}" ]]; then
+            stty "${orig}" 2>/dev/null || stty echo icanon
+        else
+            stty echo icanon 2>/dev/null
+        fi
+        echo >&2
+    }
+    trap restore_tty EXIT TERM
+    trap 'interrupted=1' INT
+
+    # Redraw in place by moving the cursor up to the menu's first line and
+    # clearing down (we know the height is n lines). Avoids the ANSI
+    # save/restore-cursor sequences (\033[s/\033[u) which some terminals don't
+    # honour, which made arrow navigation append duplicate lists.
+    redraw() {
+        if (( !first )); then
+            printf '\033[%dA\033[J' "${n}" >&2
+        fi
+        first=0
         for (( idx = 0; idx < n; idx++ )); do
             entry="${entries[$idx]}"
-            marker="${entry##*:}"
+            marker="${entry##*$'\x1f'}"
+            path="${entry%$'\x1f'*}"
+            case "${marker}" in
+                '11') label="mounts + history" ;;
+                '10') label="mounts" ;;
+                '01') label="history" ;;
+                *)    label="${marker}" ;;
+            esac
             if (( idx == i )); then
-                printf '\033[7m> %s  [%s]\033[0m\n' "${entry%:*}" "${marker}" >&2
+                printf '\033[7m> %s  \033[32m[%s]\033[0m\n' "${path}" "${label}" >&2
             else
-                printf '  %s  [%s]\n' "${entry%:*}" "${marker}" >&2
+                printf '  %s  \033[32m[%s]\033[0m\n' "${path}" "${label}" >&2
             fi
         done
+    }
 
-        IFS= read -rsn1 key || { printf '\033[J' >&2; return 1; }
-        if [[ "${key}" == $'\e' ]]; then
-            IFS= read -rsn1 rest || true
-            case "${rest}" in
-                '[') IFS= read -rsn1 key ;;
-                *)   key="${rest}" ;;
-            esac
-            case "${key}" in
-                A) i=$(( (i + n - 1) % n )) ;;   # Up
-                B) i=$(( (i + 1) % n )) ;;       # Down
-            esac
-        else
-            case "${key}" in
-                '') printf '\033[J' >&2; break ;;     # Enter
-                q|Q) printf '\033[J' >&2; return 1 ;; # quit
-                k) i=$(( (i + n - 1) % n )) ;;
-                j) i=$(( (i + 1) % n )) ;;
-            esac
+    redraw
+    while true; do
+        if (( interrupted )); then i=-1; break; fi
+
+        # Timed read: lets us notice Ctrl-C (via the flag) and a lone Esc key.
+        if ! IFS= read -rsn1 -t 0.3 key; then
+            (( interrupted )) && { i=-1; break; }
+            continue
         fi
+        case "${key}" in
+            $'\x1b')                         # escape: arrow-key prefix
+                IFS= read -rsn1 -t 0.3 rest || rest=''
+                case "${rest}" in
+                    '[') IFS= read -rsn1 -t 0.3 key || key='' ;;
+                    *)   key="${rest}" ;;
+                esac
+                case "${key}" in
+                    A) i=$(( (i + n - 1) % n )); redraw ;;   # Up
+                    B) i=$(( (i + 1) % n )); redraw ;;       # Down
+                esac
+                ;;
+            '') break ;;                     # Enter: select
+            $'\x03'|q|Q) i=-1; break ;;      # Ctrl-C byte / q: cancel
+            k) i=$(( (i + n - 1) % n )); redraw ;;
+            j) i=$(( (i + 1) % n )); redraw ;;
+        esac
     done
 
-    stty echo
-    trap - EXIT INT TERM
-    printf '%s\n' "${entries[$i]%:*}"
+    trap - EXIT TERM INT
+    restore_tty
+    if (( i < 0 )); then
+        return 1
+    fi
+    PICK_RESULT="${entries[$i]%$'\x1f'*}"
 }
 
 main() {
@@ -85,10 +132,14 @@ main() {
     fi
 
     local chosen mounts
-    chosen="$(pick_project "${PROJECTS[@]}")" || {
+    # Run pick_project in the current shell (not $(...)) so Ctrl-C's SIGINT
+    # goes straight to the single process running the menu; the result is
+    # delivered via the global PICK_RESULT.
+    if ! pick_project "${PROJECTS[@]}"; then
         echo "Cancelled." >&2
         exit 1
-    }
+    fi
+    chosen="${PICK_RESULT}"
 
     # Auto-restore the project's memorized mounts (none if absent).
     mounts=()
