@@ -68,6 +68,52 @@ Each run of `opencode.sh` records the project path in `.opencode/projects`
 (newest-first, no duplicates) so projects can be listed later — mounts and
 history files are keyed by one-way hash, so the real path must be stored.
 
+### Shared Browser (browser.sh)
+
+`browser.sh` runs a detached Chromium shared by the human and OpenCode: the
+human gets a native window on the host display (`:0`), while OpenCode drives
+the same browser session through the Chrome DevTools Protocol (CDP) at
+`http://127.0.0.1:9222` (reachable from any container thanks to
+`--network host`).
+
+```bash
+./browser.sh start     # build image on first run, then start
+./browser.sh status
+./browser.sh stop
+```
+
+- `browser/Dockerfile` — minimal Debian + Chromium image (`dev-browser`).
+- `browser-cli/browser-cli.mjs` — CLI driver for agents (playwright-core); `browser-cli.mjs help` lists commands.
+- `skills/shared-browser/` — global skill source (registered via `skills.paths` in the host's `~/.config/opencode/opencode.json`).
+- `browser-profile/` — persistent profile; logins survive restarts (gitignored).
+- Env overrides: `BROWSER_DISPLAY`, `BROWSER_CDP_PORT`, `BROWSER_WINDOW_SIZE`.
+- The CDP port is bound to `127.0.0.1` by Chromium; treat it like shell access
+  to the browser.
+
+Agents drive the browser with `browser-cli/browser-cli.mjs` (connects to CDP
+at `127.0.0.1:9222`). The global `shared-browser` skill documents the workflow
+and the login handoff protocol; OpenCode loads it on demand instead of
+carrying MCP tool schemas in every request. Install dependencies once:
+`cd browser-cli && npm install`.
+
+The skill source lives in `skills/shared-browser/` in this repo. `opencode.sh`
+always mounts this repo at the same path for every project (deduplicated
+against project/extra mounts), and the global OpenCode config registers
+`skills.paths` to this repo's `skills/` directory.
+
+#### Login Handoff Protocol
+
+For flows that need human credentials (OIDC logins, 2FA):
+
+1. The agent navigates the shared browser to the login page, then stops acting.
+2. The human completes the login in the browser window on their desktop.
+3. The agent resumes once the expected state appears (`browser-cli.mjs wait
+   --url-prefix ...`) and verifies the URL plus the expected cookie.
+
+Agents must not type credentials themselves, must not close the browser
+window, and must not start a second Chromium against `browser-profile/`
+(the profile is locked by the running instance).
+
 ### Architecture
 
 ```
@@ -92,6 +138,7 @@ The container includes the following environment variables:
 
 Only explicitly mounted directories are accessible to OpenCode. Key mounts in opencode.sh:
 - Project directory (current working directory, mounted at same path)
+- This tooling repo (opencode-podman, mounted at same path; provides the shared-browser skill + browser-cli/browser.sh to every project)
 - `~/.config/opencode/` (OpenCode settings)
 - `~/.ssh/config` and sockets (SSH access)
 - `$XDG_RUNTIME_DIR/podman/podman.sock` (rootless Podman API socket for dependency execution; user-owned, so OpenCode gets the user's privileges at most — not root)
@@ -243,6 +290,14 @@ group: `sudo usermod -aG kvm "$USER"` and re-login.
 
 ### X11 Forwarding Not Working
 The container mounts `/tmp/.X11-unix` for X11. Ensure X server is running on host.
+
+### Browser Window Does Not Appear
+Check the X socket exists (`ls /tmp/.X11-unix`) and `BROWSER_DISPLAY` matches
+the session (default `:0`). `./browser.sh status` shows the configured display.
+
+### Browser Failed to Start (profile lock)
+Only one Chromium may use `browser-profile/` at a time. Stop other instances
+(`./browser.sh stop`) before starting again.
 
 ### SSH Not Working
 Verify `~/.ssh/config` exists on host and is mounted in opencode.sh.

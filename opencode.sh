@@ -165,7 +165,15 @@ run_container() {
         -v "${PROJECT_DIR}:${PROJECT_DIR}"
     )
 
+    # The tooling repo (this script's directory) is always mounted so the
+    # shared-browser skill and browser-cli/browser.sh are available to every
+    # project. Deduplicate against PROJECT_DIR and extra mounts.
+    if [[ "${SCRIPT_DIR}" != "${PROJECT_DIR}" ]]; then
+        volume_args+=(-v "${SCRIPT_DIR}:${SCRIPT_DIR}")
+    fi
+
     for path in "${EXTRA_MOUNTS[@]}"; do
+        [[ "${path}" == "${SCRIPT_DIR}" || "${path}" == "${PROJECT_DIR}" ]] && continue
         volume_args+=(-v "${path}:${path}")
     done
 

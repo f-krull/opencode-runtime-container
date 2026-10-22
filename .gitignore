@@ -1,3 +1,6 @@
 .opencode-version
 .opencode
+browser-profile/
+browser-cli/node_modules/
+browser-cli/.state.json
 
