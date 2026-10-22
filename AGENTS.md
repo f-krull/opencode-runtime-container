@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-Security-focused Docker container setup for running [OpenCode](https://github.com/anomalyco/opencode). 
+Security-focused rootless Podman container setup for running [OpenCode](https://github.com/anomalyco/opencode). 
 
 **Design goals:**
 - Restrict OpenCode's filesystem access by only mounting specific files/folders
-- Limit what files OpenCode can view and edit
-- Allow running Docker from inside the container to execute code with specific dependencies
+- Limit what OpenCode can view and edit
+- Allow running Podman (and `docker` via a shim) from inside the container to execute code with specific dependencies
 
 This is NOT the OpenCode source code - it's a containerized environment for safely using OpenCode on development projects.
 
@@ -19,8 +19,10 @@ This is NOT the OpenCode source code - it's a containerized environment for safe
 # Using the build script (recommended)
 ./build.sh
 
-# Or directly with docker
-docker build -t opencode-fk -f Dockerfile .
+# Or directly with podman (PODMAN_VERSION must match the host podman)
+podman build -t opencode-fk \
+    --build-arg PODMAN_VERSION="$(podman --version | awk '{print $NF}')" \
+    -f Dockerfile .
 ```
 
 ### Run the Container
@@ -31,11 +33,13 @@ Run from your project directory:
 # Using the run script (recommended)
 ./path/to/opencode.sh
 
-# Or directly with docker
-docker run -it --rm \
+# Or directly with podman
+podman run -it --rm \
+    --userns=keep-id \
     -v "${PWD}:${PWD}" \
     -v "${HOME}/.config/opencode/":/home/dev/.config/opencode/ \
-    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "${XDG_RUNTIME_DIR}/podman/podman.sock:${XDG_RUNTIME_DIR}/podman/podman.sock" \
+    -e "CONTAINER_HOST=unix://${XDG_RUNTIME_DIR}/podman/podman.sock" \
     -w "${PWD}" \
     --network host \
     opencode-fk
@@ -44,7 +48,7 @@ docker run -it --rm \
 ### Single Command Execution
 
 ```bash
-docker run --rm -it \
+podman run --rm -it --userns=keep-id \
     -v "$(pwd):$(pwd)" \
     -w "$(pwd)" \
     opencode-fk <command>
@@ -72,8 +76,8 @@ Host Machine                    Container
 │  Project Code   │◄──mount───►│  Project Dir    │
 │  (current dir)  │            │  (same path)    │
 ├─────────────────┤            ├─────────────────┤
-│  Docker Daemon  │◄──socket─►│  docker client  │
-│                 │   mount    │  (run tests)    │
+│  Podman (user)  │◄──socket─►│ podman-remote   │
+│  API socket     │   mount    │ (run tests)     │
 └─────────────────┘            └─────────────────┘
 ```
 
@@ -82,6 +86,7 @@ Host Machine                    Container
 The container includes the following environment variables:
 - `OPENCODE_VERSION` - The OpenCode version baked into the container image
 - `UID` / `GID` - User/group IDs for the dev user
+- `CONTAINER_HOST` - Points the Podman remote client at the mounted user socket
 
 ### Security Model
 
@@ -89,7 +94,7 @@ Only explicitly mounted directories are accessible to OpenCode. Key mounts in op
 - Project directory (current working directory, mounted at same path)
 - `~/.config/opencode/` (OpenCode settings)
 - `~/.ssh/config` and sockets (SSH access)
-- `/var/run/docker.sock` (Docker-in-Docker for dependency execution)
+- `$XDG_RUNTIME_DIR/podman/podman.sock` (rootless Podman API socket for dependency execution; user-owned, so OpenCode gets the user's privileges at most — not root)
 
 ## Testing
 
@@ -100,7 +105,7 @@ This project does not contain application source code to test. To verify the con
 ./build.sh
 
 # Test container runs and OpenCode is available
-docker run --rm -it opencode-fk opencode --version
+podman run --rm -it --userns=keep-id opencode-fk opencode --version
 ```
 
 ## Code Style Guidelines
@@ -109,11 +114,11 @@ docker run --rm -it opencode-fk opencode --version
 
 Follow these conventions:
 - Use strict mode: `set -euo pipefail`
-- Use lowercase with underscores for variables: `project_dir`, `docker_gid`
+- Use lowercase with underscores for variables: `project_dir`, `podman_version`
 - Use uppercase for constants: `DEFAULT_PORT=8080`
 - Quote all variable expansions: `"${VAR}"` not `$VAR`
 - Use `$(..)` not backticks for command substitution
-- Handle command failures: `DOCKER_GID=$(getent group docker | cut -d: -f3) || DOCKER_GID=999`
+- Handle command failures: `PODMAN_VERSION=$(podman --version | awk '{print $NF}') || PODMAN_VERSION=3.4.4`
 - Use `[[ ]]` for tests, not `[ ]`
 - Use case statements for pattern matching
 
@@ -182,7 +187,7 @@ This will:
 4. Build a new container with the latest version
 5. Update the version file (`.opencode-version`)
 
-The `update` command does not start the container—it only updates the Docker image.
+The `update` command does not start the container—it only updates the container image.
 
 The current version is displayed on startup and is also available inside the container as the `OPENCODE_VERSION` environment variable.
 
@@ -201,17 +206,40 @@ On regular runs, the script:
 
 The version is persisted in `.opencode-version` and also baked into the container as `OPENCODE_VERSION` environment variable.
 
+### Podman Client Version
+
+The container's Podman remote client must match the host's Podman version (the
+libpod remote API is not cross-version compatible). `build.sh` and `opencode.sh`
+read the host version with `podman --version` and pass it as the `PODMAN_VERSION`
+build arg; the Dockerfile downloads the matching static `podman-remote` client
+from the upstream GitHub release (checksum-verified against the release
+`shasums`). After upgrading Podman on the host, rebuild the image
+(`./path/to/opencode.sh update`).
+
 ### Add New Volume Mounts
 
-Edit `opencode.sh` and add to the `docker run` command:
+Edit `opencode.sh` and add to the `podman run` command:
 ```bash
 -v "${HOME}/path/to/dir":/home/dev/path/to/dir
 ```
 
 ## Troubleshooting
 
-### Docker Socket Permission Denied
-Ensure your user is in the docker group or use `--group-add ${DOCKER_GID}` as shown in opencode.sh.
+### Podman Socket Not Found
+Enable the rootless Podman API socket on the host:
+```bash
+systemctl --user enable --now podman.socket
+```
+The socket is user-owned (`$XDG_RUNTIME_DIR/podman/podman.sock`, mode 0660), so
+no group membership is required inside the container.
+
+### Remote Client/Server Version Mismatch
+Rebuild the image so the bundled client matches the host: `./path/to/opencode.sh update`.
+
+### /dev/kvm Not Accessible with --kvm
+Rootless Podman passes the host user's supplementary groups through
+(`--group-add keep-groups`, crun only). Ensure the host user is in the `kvm`
+group: `sudo usermod -aG kvm "$USER"` and re-login.
 
 ### X11 Forwarding Not Working
 The container mounts `/tmp/.X11-unix` for X11. Ensure X server is running on host.

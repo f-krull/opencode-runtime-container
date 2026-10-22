@@ -2,8 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-DOCKER_GID=$(getent group docker | cut -d: -f3 || echo 999)
-KVM_GID=$(getent group kvm | cut -d: -f3 || true)
+
+# Rootless Podman API socket on the host. The container talks to the host's
+# user-level Podman through this socket (never a privileged daemon).
+PODMAN_SOCKET="${PODMAN_SOCKET:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock}"
 
 PROJECT_DIR="$(realpath "$(pwd)")"
 VERSION_FILE="${SCRIPT_DIR}/.opencode-version"
@@ -74,6 +76,32 @@ update_version_file() {
     echo "${version}" > "${VERSION_FILE}"
 }
 
+require_podman() {
+    if ! command -v podman >/dev/null 2>&1; then
+        echo "✗ podman not found; this launcher requires rootless Podman on the host." >&2
+        exit 1
+    fi
+}
+
+host_podman_version() {
+    podman --version | awk '{print $NF}'
+}
+
+# The container's Podman remote client must match the host's Podman version
+# (the libpod remote API is not cross-version compatible).
+build_image() {
+    local podman_version
+    podman_version="$(host_podman_version)"
+
+    echo "→ Building opencode container with Podman remote client v${podman_version}"
+    podman build -t opencode-fk \
+        --build-arg OPENCODE_VERSION="${OPENCODE_VERSION}" \
+        --build-arg UID="$(id -u)" \
+        --build-arg GID="$(id -g)" \
+        --build-arg PODMAN_VERSION="${podman_version}" \
+        -f "${SCRIPT_DIR}/Dockerfile" "${SCRIPT_DIR}"
+}
+
 update_opencode() {
     local latest
     latest=$(check_for_updates)
@@ -88,23 +116,14 @@ update_opencode() {
     OPENCODE_VERSION="${latest}"
     echo "→ Updating OpenCode to version ${latest}..."
 
-    echo "→ Building opencode container with Docker client support (GID=${DOCKER_GID})"
-    docker build -t opencode-fk \
-        --build-arg OPENCODE_VERSION="${OPENCODE_VERSION}" \
-        --build-arg DOCKER_GID="${DOCKER_GID}" \
-        -f - "${SCRIPT_DIR}" < "${SCRIPT_DIR}/Dockerfile"
+    build_image
 
     update_version_file "${latest}"
     echo "✓ Updated to version ${latest}"
 }
 
 build_and_run() {
-    echo "→ Building opencode container with Docker client support (GID=${DOCKER_GID})"
-    docker build -t opencode-fk \
-        --build-arg OPENCODE_VERSION="${OPENCODE_VERSION}" \
-        --build-arg DOCKER_GID="${DOCKER_GID}" \
-        -f - "${SCRIPT_DIR}" < "${SCRIPT_DIR}/Dockerfile"
-
+    build_image
     run_container
 }
 
@@ -162,24 +181,36 @@ run_container() {
         -v "${OPENCODE_HISTORY}":/home/dev/.bash_history
     )
 
-    if [[ "${MOUNT_DOCKER}" == true ]]; then
-        volume_args+=(-v /var/run/docker.sock:/var/run/docker.sock)
+    local -a env_args=(-e "DISPLAY=${DISPLAY:-}")
+
+    if [[ "${MOUNT_PODMAN}" == true ]]; then
+        if [[ ! -S "${PODMAN_SOCKET}" ]]; then
+            echo "✗ Podman API socket not found: ${PODMAN_SOCKET}" >&2
+            echo "  Enable it on the host with: systemctl --user enable --now podman.socket" >&2
+            exit 1
+        fi
+        # Mount at the same path, so paths inside API requests stay valid on the host.
+        volume_args+=(-v "${PODMAN_SOCKET}:${PODMAN_SOCKET}")
+        env_args+=(-e "CONTAINER_HOST=unix://${PODMAN_SOCKET}")
     fi
 
-    local -a extra_args=()
-    if [[ "${MOUNT_DOCKER}" == true ]]; then
-        extra_args+=(--group-add "${DOCKER_GID}")
-    fi
-
+    # keep-id maps the host user to the same UID/GID inside the container, so
+    # mounted project files keep their ownership (rootless Podman remaps UIDs).
+    local -a extra_args=(--userns=keep-id)
     if [[ "${MOUNT_KVM}" == true ]]; then
         extra_args+=(--device /dev/kvm)
-        if [[ -n "${KVM_GID}" ]]; then
-            extra_args+=(--group-add "${KVM_GID}")
+        # Rootless Podman cannot grant the host 'kvm' group by GID; keep-groups
+        # passes the invoking user's supplementary groups into the container.
+        if id -nG | tr ' ' '\n' | grep -qx kvm; then
+            extra_args+=(--group-add keep-groups)
+        else
+            echo "⚠ Not a member of the host 'kvm' group; /dev/kvm may be inaccessible." >&2
+            echo "  Fix with: sudo usermod -aG kvm ${USER}" >&2
         fi
     fi
 
-    docker run -it --rm \
-        -e DISPLAY=$DISPLAY \
+    podman run -it --rm \
+        "${env_args[@]}" \
         "${volume_args[@]}" \
         -w "${PROJECT_DIR}" \
         --network host \
@@ -188,19 +219,19 @@ run_container() {
         bash -c "exec bash"
 }
 
-MOUNT_DOCKER=true
+MOUNT_PODMAN=true
 MOUNT_KVM=false
 
 show_help() {
     cat <<'EOF'
 Usage: opencode.sh [options] [project-dir] [extra-mounts...]
 
-Run OpenCode inside a Docker container.
+Run OpenCode inside a rootless Podman container.
 
 Options:
-  --no-docker    Do not mount the Docker socket (default: mounted)
+  --no-podman    Do not mount the Podman API socket (default: mounted)
   --kvm          Mount /dev/kvm for hardware-accelerated virtualization
-                 (default: not mounted)
+                 (requires membership in the host 'kvm' group)
   -h, --help     Show this help message and exit
   update         Build/update the container image to the latest version
 
@@ -214,8 +245,8 @@ parse_flags() {
     local args=()
     for arg in "$@"; do
         case "${arg}" in
-            --no-docker)
-                MOUNT_DOCKER=false
+            --no-podman|--no-docker)
+                MOUNT_PODMAN=false
                 ;;
             --kvm)
                 MOUNT_KVM=true
@@ -239,6 +270,7 @@ parse_flags() {
 
 main() {
     parse_flags "$@"
+    require_podman
 
     if [[ "${POSITIONAL[0]:-}" == "update" ]]; then
         update_opencode
