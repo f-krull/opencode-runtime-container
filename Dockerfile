@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     node.js \
     nano \
-    docker.cli \
     ssh \
     xxd \
     file \
@@ -60,17 +59,53 @@ RUN \
         fi; \
     fi
 
-  # ========================================
-# Docker client support for running project tests from inside opencode
 # ========================================
-ARG DOCKER_GID=999
-RUN \
-    if [ "${DOCKER_GID}" != "999" ]; then \
-        if ! getent group docker >/dev/null; then \
-            groupadd -g ${DOCKER_GID} docker; \
-        fi && \
-        usermod -aG docker ${USERNAME}; \
-    fi
+# Podman remote client for running project tests from inside opencode.
+# The client drives the host's rootless Podman through the mounted Podman
+# API socket (never a privileged daemon). Remote client and server versions
+# must match (the libpod remote API is not cross-version compatible), so the
+# host passes its own Podman version in at build time.
+# ========================================
+ARG TARGETARCH
+ARG PODMAN_VERSION=3.4.4
+RUN set -eu; \
+    ARCH="${TARGETARCH}"; \
+    if [ -z "${ARCH}" ]; then \
+        ARCH="$(dpkg --print-architecture)"; \
+    fi; \
+    case "${ARCH}" in \
+        amd64|x86_64) ARCH="amd64" ;; \
+        arm64|aarch64) ARCH="arm64" ;; \
+        *) echo "Unsupported architecture for Podman client: ${ARCH}" >&2; exit 1 ;; \
+    esac; \
+    case "${PODMAN_VERSION}" in \
+        3.*) ASSET="podman-remote-static.tar.gz" ;; \
+        *)   ASSET="podman-remote-static-linux_${ARCH}.tar.gz" ;; \
+    esac; \
+    BASE_URL="https://github.com/containers/podman/releases/download/v${PODMAN_VERSION}"; \
+    echo "Downloading Podman remote client v${PODMAN_VERSION} (${ASSET})"; \
+    curl -fsSL "${BASE_URL}/${ASSET}" -o /tmp/podman-remote.tar.gz; \
+    if curl -fsSL "${BASE_URL}/shasums" -o /tmp/podman-shasums; then \
+        EXPECTED="$(awk -v a="${ASSET}" '($2 == a || $2 == ("*" a)) {print $1}' /tmp/podman-shasums)"; \
+        if [ -z "${EXPECTED}" ]; then \
+            echo "Checksum for ${ASSET} not found in shasums" >&2; exit 1; \
+        fi; \
+        echo "${EXPECTED}  /tmp/podman-remote.tar.gz" | sha256sum -c -; \
+    else \
+        echo "WARNING: podman shasums unavailable, skipping checksum verification" >&2; \
+    fi; \
+    mkdir -p /tmp/podman-remote; \
+    tar -xzf /tmp/podman-remote.tar.gz -C /tmp/podman-remote; \
+    BIN="$(find /tmp/podman-remote -type f -name 'podman-remote-static*' | head -n 1)"; \
+    if [ -z "${BIN}" ]; then \
+        echo "podman-remote-static binary not found in archive" >&2; exit 1; \
+    fi; \
+    mv "${BIN}" /usr/local/bin/podman; \
+    chmod 0755 /usr/local/bin/podman; \
+    rm -rf /tmp/podman-remote /tmp/podman-remote.tar.gz /tmp/podman-shasums; \
+    printf '#!/bin/sh\nexec podman "$@"\n' > /usr/local/bin/docker; \
+    chmod 0755 /usr/local/bin/docker; \
+    podman --version
 
 
 # ========================================

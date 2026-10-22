@@ -1,0 +1,9 @@
+{
+  "name": "browser-cli",
+  "private": true,
+  "type": "module",
+  "description": "CLI driver for the shared dev-browser Chromium over CDP",
+  "dependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

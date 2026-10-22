@@ -1,6 +1,6 @@
 # OpenCode Container
 
-Security-focused Docker container for running [OpenCode](https://github.com/anomalyco/opencode) with restricted filesystem access and Docker-in-Docker support.
+Security-focused rootless [Podman](https://podman.io) setup for running [OpenCode](https://github.com/anomalyco/opencode) with restricted filesystem access and Podman-in-Podman support.
 
 ## Quick Start
 
@@ -14,9 +14,14 @@ Security-focused Docker container for running [OpenCode](https://github.com/anom
 
 ## Requirements
 
-- Docker
-- Docker socket accessible (`/var/run/docker.sock`)
-- User in docker group (or equivalent)
+- Rootless Podman on the host (tested with 3.4.4 on Ubuntu 22.04)
+- Podman user API socket enabled:
+
+  ```bash
+  systemctl --user enable --now podman.socket
+  ```
+
+- For `--kvm`: membership in the host `kvm` group
 
 ## First Run
 
@@ -42,8 +47,42 @@ When paths are provided, they are resolved relative to the current working direc
 
 - Project directory (first path argument, or current working directory if no args)
 - Additional directories (subsequent path arguments, each mounted at the same path inside the container)
+- The `opencode-podman/` tooling repo itself (same path) - provides the `shared-browser` skill and `browser-cli`/`browser.sh` to every project
 - `~/.config/opencode/` - OpenCode settings and API key
 - `~/.local/share/opencode/` - OpenCode data
 - `~/.ssh/config` and `~/.ssh/sockets` - SSH access (OpenCode can SSH without password or key through existing connections shared via ControlPath)
-- `/var/run/docker.sock` - Docker daemon (for running tests)
+- `$XDG_RUNTIME_DIR/podman/podman.sock` - rootless Podman API socket (for running tests)
 - `/tmp/.X11-unix` - X11 forwarding (clipboard)
+
+## Podman-in-Podman
+
+The container ships a statically linked `podman-remote` client whose version
+matches the host's Podman (passed as the `PODMAN_VERSION` build arg; the libpod
+remote API is not cross-version compatible). A `docker` shim forwards to it, so
+both `podman ...` and `docker ...` work inside the container.
+
+Both talk to the host's **rootless, user-owned** Podman API socket — no
+privileged daemon and no root-equivalent `/var/run/docker.sock` is mounted.
+Containers started from inside OpenCode run with the host user's privileges,
+and the launcher uses `--userns=keep-id` so file ownership in mounted
+directories stays consistent.
+
+## Shared Browser
+
+`browser.sh` runs a detached Chromium shared by the human and OpenCode: a
+native window on the host display for you, and a CDP endpoint
+(`http://127.0.0.1:9222`) for agent control. Logins persist in
+`browser-profile/`, so the session survives restarts.
+
+```bash
+./browser.sh start    # build image on first run, then start
+./browser.sh status
+./browser.sh stop
+```
+
+Agents drive the browser through `browser-cli/` (a small `playwright-core`
+CLI speaking CDP); the global `shared-browser` skill documents the workflow,
+so OpenCode loads browser instructions on demand instead of carrying MCP tool
+schemas in every request. Install once: `cd browser-cli && npm install`.
+The skill source lives in `skills/shared-browser/` and is registered via
+`skills.paths` in the host's `~/.config/opencode/opencode.json`.
