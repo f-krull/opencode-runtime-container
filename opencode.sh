@@ -177,7 +177,11 @@ run_container() {
         volume_args+=(-v "${path}:${path}")
     done
 
+    # Mount the host's resolv.conf: with --network host the podman-generated
+    # snapshot goes stale when the machine switches networks, which breaks DNS
+    # in long-lived sessions until the container is recreated.
     volume_args+=(
+        -v /etc/resolv.conf:/etc/resolv.conf:ro
         -v "${HOME}/.config/opencode/":/home/dev/.config/opencode/
         -v "${HOME}/.local/share/opencode/":/home/dev/.local/share/opencode/
         -v "${HOME}/.ssh/config":/home/dev/.ssh/config

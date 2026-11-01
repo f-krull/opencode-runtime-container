@@ -116,12 +116,16 @@ start_browser() {
     mkdir -p "${PROFILE_DIR}"
 
     echo "→ Starting ${CONTAINER_NAME} on display ${DISPLAY_NAME}"
+    # Mount the host's resolv.conf: with --network host the podman-generated
+    # snapshot goes stale when the machine switches networks, which breaks DNS
+    # in the browser until the container is recreated.
     podman run -d --rm \
         --name "${CONTAINER_NAME}" \
         --userns=keep-id \
         --network host \
         -e "DISPLAY=${DISPLAY_NAME}" \
         -v /tmp/.X11-unix:/tmp/.X11-unix \
+        -v /etc/resolv.conf:/etc/resolv.conf:ro \
         -v "${PROFILE_DIR}:/profile" \
         "${IMAGE_NAME}" \
         /usr/bin/chromium \
