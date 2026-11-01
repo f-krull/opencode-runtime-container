@@ -1,16 +1,52 @@
 #!/usr/bin/env node
 import { chromium } from 'playwright-core';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import { dirname, isAbsolute, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = resolve(CLI_DIR, '.state.json');
-const ENDPOINT = process.env.BROWSER_CDP_ENDPOINT || 'http://127.0.0.1:9222';
+const TOOLING_DIR = resolve(CLI_DIR, '..');
+
+function projectDir() {
+  const configured = process.env.BROWSER_PROJECT_DIR || process.env.OPENCODE_PROJECT_DIR || process.cwd();
+  try {
+    return realpathSync(configured);
+  } catch {
+    return configured;
+  }
+}
+
+const PROJECT_DIR = projectDir();
+const INSTANCE_KEY = process.env.BROWSER_INSTANCE || process.env.OPENCODE_PROJECT_KEY ||
+  createHash('sha256').update(PROJECT_DIR).digest('hex');
+const SAFE_KEY = INSTANCE_KEY.replace(/[^A-Za-z0-9._-]/g, '_');
+const PROFILE_DIR = process.env.BROWSER_PROFILE_DIR || resolve(TOOLING_DIR, 'browser-profile', INSTANCE_KEY);
+const STATE_FILE = resolve(CLI_DIR, `.state-${SAFE_KEY}.json`);
+const ENDPOINT_FILE = resolve(PROFILE_DIR, '.cdp-endpoint');
+const MODE_FILE = resolve(PROFILE_DIR, '.mode');
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_MAX_CHARS = 20000;
 
-const USAGE = `browser-cli -- drive the shared Chromium over CDP
+function endpoint() {
+  if (process.env.BROWSER_CDP_ENDPOINT) return process.env.BROWSER_CDP_ENDPOINT;
+  try {
+    const value = readFileSync(ENDPOINT_FILE, 'utf8').trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function currentMode() {
+  try {
+    return readFileSync(MODE_FILE, 'utf8').trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+const USAGE = `browser-cli -- drive this project's Chromium over CDP
 
 usage: browser-cli <command> [args] [--flags]
 
@@ -19,7 +55,7 @@ navigation
   wait --text "..." | --selector "..."         block until the condition matches
        | --url-prefix "..." | --url-regex "..." [--timeout ms]
   scroll [--by N] | scroll --to top|bottom|<selector>
-  status                                       CDP + current page info
+  status                                       instance + CDP + current page info
 
 inspection
   snapshot [--selector S] [--max-chars N]      accessibility tree (default: body)
@@ -35,11 +71,15 @@ interaction
 tabs
   tabs list | tabs new [url] | tabs select <n> | tabs close <n>
 
+lifecycle
+  quit                                         close the browser (used by browser.sh)
+
 capture
   shot <path> [--selector S] [--full] [--jpeg [--quality N]]
 
 selectors: CSS, text=..., role=button[name="Login"]; other Playwright engines pass through
-env: BROWSER_CDP_ENDPOINT (default ${'http://127.0.0.1:9222'})`;
+instance: ${INSTANCE_KEY} (${PROJECT_DIR})
+env: BROWSER_CDP_ENDPOINT overrides ${ENDPOINT_FILE}`;
 
 function fail(message) {
   console.error(`browser-cli: ${message}`);
@@ -82,10 +122,14 @@ function parseOptions(args) {
 }
 
 async function connect() {
+  const target = endpoint();
+  if (!target) {
+    fail(`no CDP endpoint for ${PROJECT_DIR}\n  start this project's browser first: browser.sh start`);
+  }
   try {
-    return await chromium.connectOverCDP(ENDPOINT, { timeout: 10000 });
+    return await chromium.connectOverCDP(target, { timeout: 10000 });
   } catch (err) {
-    fail(`cannot connect to ${ENDPOINT} (${String(err.message).split('\n')[0]})\n  is the browser running? try: browser.sh start`);
+    fail(`cannot connect to ${target} (${String(err.message).split('\n')[0]})\n  is the browser running? try: browser.sh start`);
   }
 }
 
@@ -150,10 +194,14 @@ function printResult(result) {
 async function status() {
   const browser = await connect();
   const page = await selectedPage(browser);
-  console.log(`cdp:     ${ENDPOINT} (${browser.version()})`);
-  console.log(`pages:   ${contextPageCount(browser)}`);
-  console.log(`current: ${page.url()}`);
-  console.log(`title:   ${await page.title()}`);
+  console.log(`project:  ${PROJECT_DIR}`);
+  console.log(`instance: ${INSTANCE_KEY}`);
+  console.log(`profile:  ${PROFILE_DIR}`);
+  console.log(`mode:     ${currentMode()}`);
+  console.log(`cdp:      ${endpoint()} (${browser.version()})`);
+  console.log(`pages:    ${contextPageCount(browser)}`);
+  console.log(`current:  ${page.url()}`);
+  console.log(`title:    ${await page.title()}`);
 }
 
 function contextPageCount(browser) {
@@ -339,6 +387,16 @@ async function tabs(positionals) {
   fail(`unknown tabs subcommand: ${sub} (list, new, select, close)`);
 }
 
+async function quit() {
+  const browser = await connect();
+  const session = await browser.newBrowserCDPSession();
+  try {
+    await session.send('Browser.close');
+  } catch {
+    // The connection normally drops while the browser shuts down.
+  }
+}
+
 async function action(name, positionals, options) {
   const browser = await connect();
   const page = await selectedPage(browser);
@@ -404,6 +462,7 @@ async function main() {
     cookies,
     shot,
     tabs,
+    quit,
     click: (p, o) => action('click', p, o),
     dblclick: (p, o) => action('dblclick', p, o),
     hover: (p, o) => action('hover', p, o),

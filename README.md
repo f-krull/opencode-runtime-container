@@ -47,7 +47,7 @@ When paths are provided, they are resolved relative to the current working direc
 
 - Project directory (first path argument, or current working directory if no args)
 - Additional directories (subsequent path arguments, each mounted at the same path inside the container)
-- The `opencode-podman/` tooling repo itself (same path) - provides the `shared-browser` skill and `browser-cli`/`browser.sh` to every project
+- This tooling repo (mounted at the same path) - provides the `shared-browser` skill and `browser-cli`/`browser.sh` to every project
 - `~/.config/opencode/` - OpenCode settings and API key
 - `~/.local/share/opencode/` - OpenCode data
 - `~/.ssh/config` and `~/.ssh/sockets` - SSH access (OpenCode can SSH without password or key through existing connections shared via ControlPath)
@@ -69,20 +69,31 @@ directories stays consistent.
 
 ## Shared Browser
 
-`browser.sh` runs a detached Chromium shared by the human and OpenCode: a
-native window on the host display for you, and a CDP endpoint
-(`http://127.0.0.1:9222`) for agent control. Logins persist in
-`browser-profile/`, so the session survives restarts.
+`browser.sh` runs one detached Chromium per project, headless by default. The
+agent drives it over an auto-allocated localhost CDP endpoint; no window is
+mapped on your desktop, so browser work cannot steal focus. Different projects
+get separate containers, profiles and endpoints, so their sessions are
+independent. Open tabs and session cookies are restored across stops and mode
+switches (use `browser.sh` rather than raw `podman stop` so Chromium flushes
+state).
+
+For human-in-the-loop logins, expose the same profile in a headful window and
+hide it again afterwards:
 
 ```bash
-./browser.sh start    # build image on first run, then start
+./browser.sh start      # build image on first run, then start headless
+./browser.sh login      # show the same profile headful for a login
+./browser.sh headless   # hide it again (same profile/tabs)
 ./browser.sh status
+./browser.sh list
 ./browser.sh stop
+./browser.sh stop-all
 ```
 
-Agents drive the browser through `browser-cli/` (a small `playwright-core`
-CLI speaking CDP); the global `shared-browser` skill documents the workflow,
-so OpenCode loads browser instructions on demand instead of carrying MCP tool
-schemas in every request. Install once: `cd browser-cli && npm install`.
-The skill source lives in `skills/shared-browser/` and is registered via
-`skills.paths` in the host's `~/.config/opencode/opencode.json`.
+Logins persist in `browser-profile/<project-key>/`. Agents drive the browser
+through `browser-cli/` (a small `playwright-core` CLI speaking CDP); the
+global `shared-browser` skill documents the workflow, so OpenCode loads browser
+instructions on demand instead of carrying MCP tool schemas in every request.
+Install once: `cd browser-cli && npm install`. The skill source lives in
+`skills/shared-browser/` and is registered via `skills.paths` in the host's
+`~/.config/opencode/opencode.json`.

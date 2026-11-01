@@ -3,4 +3,5 @@
 browser-profile/
 browser-cli/node_modules/
 browser-cli/.state.json
+browser-cli/.state-*.json
 

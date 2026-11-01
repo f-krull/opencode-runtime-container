@@ -14,11 +14,16 @@ OPENCODE_BASHRC="${OPENCODE_DIR}/.bashrc"
 
 OPENCODE_VERSION="${OPENCODE_VERSION:-latest}"
 
+# One key per absolute project path (shared state would leak A↔B).
+project_key_for_dir() {
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+}
+
 # One history file per absolute project path (shared history would leak A↔B).
 history_file_for_project() {
     local project_dir="$1"
     local hist_key
-    hist_key="$(printf '%s' "${project_dir}" | sha256sum | awk '{print $1}')"
+    hist_key="$(project_key_for_dir "${project_dir}")"
     printf '%s\n' "${OPENCODE_DIR}/history/${hist_key}"
 }
 
@@ -152,8 +157,9 @@ validate_paths() {
 run_container() {
     echo "→ Starting opencode v${OPENCODE_VERSION}"
 
-    local OPENCODE_HISTORY
+    local OPENCODE_HISTORY PROJECT_KEY
     OPENCODE_HISTORY="$(history_file_for_project "${PROJECT_DIR}")"
+    PROJECT_KEY="$(project_key_for_dir "${PROJECT_DIR}")"
 
     mkdir -p "${HOME}/.local/share/opencode/"
     mkdir -p "${OPENCODE_DIR}/history"
@@ -193,7 +199,14 @@ run_container() {
         -v "${OPENCODE_HISTORY}":/home/dev/.bash_history
     )
 
-    local -a env_args=(-e "DISPLAY=${DISPLAY:-}")
+    # Browser scripts key their container/profile/CDP state by project, so
+    # per-project OpenCode sessions do not share one Chromium.
+    local -a env_args=(
+        -e "DISPLAY=${DISPLAY:-}"
+        -e "OPENCODE_PROJECT_DIR=${PROJECT_DIR}"
+        -e "OPENCODE_PROJECT_KEY=${PROJECT_KEY}"
+        -e "OPENCODE_TOOLING_DIR=${SCRIPT_DIR}"
+    )
 
     if [[ "${MOUNT_PODMAN}" == true ]]; then
         if [[ ! -S "${PODMAN_SOCKET}" ]]; then
@@ -344,7 +357,7 @@ resolve_extra_mounts() {
 mounts_file_for_project() {
     local project_dir="$1"
     local key
-    key="$(printf '%s' "${project_dir}" | sha256sum | awk '{print $1}')"
+    key="$(project_key_for_dir "${project_dir}")"
     printf '%s\n' "${OPENCODE_DIR}/mounts/${key}"
 }
 
