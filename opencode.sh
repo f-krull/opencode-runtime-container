@@ -27,6 +27,15 @@ history_file_for_project() {
     printf '%s\n' "${OPENCODE_DIR}/history/${hist_key}"
 }
 
+# Per-project scratch space mounted over /tmp/opencode. This shadows any
+# stale root-owned /tmp/opencode baked into the container image.
+tmp_dir_for_project() {
+    local project_dir="$1"
+    local tmp_key
+    tmp_key="$(project_key_for_dir "${project_dir}")"
+    printf '%s\n' "${OPENCODE_DIR}/tmp/${tmp_key}"
+}
+
 # Record a project path so previous projects can be listed later (mounts and
 # history files are keyed by one-way hash, so the real path must be stored).
 # Maintains newest-first order with no duplicates.
@@ -157,18 +166,21 @@ validate_paths() {
 run_container() {
     echo "→ Starting opencode v${OPENCODE_VERSION}"
 
-    local OPENCODE_HISTORY PROJECT_KEY
+    local OPENCODE_HISTORY OPENCODE_TMP PROJECT_KEY
     OPENCODE_HISTORY="$(history_file_for_project "${PROJECT_DIR}")"
+    OPENCODE_TMP="$(tmp_dir_for_project "${PROJECT_DIR}")"
     PROJECT_KEY="$(project_key_for_dir "${PROJECT_DIR}")"
 
     mkdir -p "${HOME}/.local/share/opencode/"
     mkdir -p "${OPENCODE_DIR}/history"
+    mkdir -p "${OPENCODE_TMP}"
     touch "${OPENCODE_BASHRC}"
     touch "${OPENCODE_HISTORY}"
     register_project "${PROJECT_DIR}"
 
     local -a volume_args=(
         -v "${PROJECT_DIR}:${PROJECT_DIR}"
+        -v "${OPENCODE_TMP}:/tmp/opencode"
     )
 
     # The tooling repo (this script's directory) is always mounted so the

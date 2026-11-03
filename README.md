@@ -53,6 +53,15 @@ When paths are provided, they are resolved relative to the current working direc
 - `~/.ssh/config` and `~/.ssh/sockets` - SSH access (OpenCode can SSH without password or key through existing connections shared via ControlPath)
 - `$XDG_RUNTIME_DIR/podman/podman.sock` - rootless Podman API socket (for running tests)
 - `/tmp/.X11-unix` - X11 forwarding (clipboard)
+- `.opencode/tmp/<project-key>` - per-project scratch space mounted at `/tmp/opencode`
+
+The per-project scratch space keeps OpenCode's temp directory writable even when
+the container image contains a stale root-owned `/tmp/opencode`. Wipe all
+projects' temp directories with:
+
+```bash
+./cleanup-tmps.sh
+```
 
 ## Podman-in-Podman
 

@@ -159,6 +159,7 @@ Only explicitly mounted directories are accessible to OpenCode. Key mounts in op
 - `~/.config/opencode/` (OpenCode settings)
 - `~/.ssh/config` and sockets (SSH access)
 - `$XDG_RUNTIME_DIR/podman/podman.sock` (rootless Podman API socket for dependency execution; user-owned, so OpenCode gets the user's privileges at most — not root)
+- `.opencode/tmp/<project-key>` (per-project scratch space mounted at `/tmp/opencode`; shadows any stale root-owned temp dir in the image)
 
 ## Testing
 
@@ -279,6 +280,18 @@ build arg; the Dockerfile downloads the matching static `podman-remote` client
 from the upstream GitHub release (checksum-verified against the release
 `shasums`). After upgrading Podman on the host, rebuild the image
 (`./path/to/opencode.sh update`).
+
+### Clean Temporary Files
+
+Each project's `/tmp/opencode` is backed by `.opencode/tmp/<project-key>` on the
+host. Remove all of them with:
+
+```bash
+./cleanup-tmps.sh
+```
+
+Stop OpenCode sessions first; deleting a directory still mounted by a running
+container leaves that session writing to an unlinked directory.
 
 ### Add New Volume Mounts
 
